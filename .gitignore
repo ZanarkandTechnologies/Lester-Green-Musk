@@ -1,0 +1,34 @@
+# Ignore all files in the root folder
+*
+!.gitignore
+
+# Re-include only the docs
+!docs/**
+
+# Re-include only the AGENTS and HEARTBEAT
+!AGENTS.md
+!HEARTBEAT.md
+
+# Re-include only the skill folders you want to share
+!skills/
+!skills/augment-boss-propose/
+!skills/augment-boss-propose/**
+
+!skills/augment-boss-execute/
+!skills/augment-boss-execute/**
+
+!skills/impl-plan/
+!skills/impl-plan/**
+
+!skills/morning-report/
+!skills/morning-report/**
+
+!skills/notion-context/
+!skills/notion-context/**
+
+!skills/read-excalidraw/
+!skills/read-excalidraw/**
+
+# Ignore Python build/runtime artifacts
+**/__pycache__/
+**/*.pyc
