@@ -3,7 +3,7 @@
 Find an existing Review proposal ticket for dedupe.
 
 Usage:
-  python3 scripts/find_review_proposal.py --title "..." --proposal-file "/tmp/proposal.md"
+  python3 scripts/find_review_proposal.py --title "..." --proposal-file "/tmp/proposal.md" [--agent-tag "agent-name"]
 """
 
 import argparse
@@ -100,6 +100,11 @@ def notion_headers() -> Dict[str, str]:
     }
 
 
+def normalize_agent_tag(value: str) -> str:
+    tag = (value or "").strip().lower()
+    return tag or "openclaw"
+
+
 def extract_title(result: Dict[str, Any]) -> str:
     title_prop = result.get("properties", {}).get("Name", {}).get("title", [])
     return "".join(part.get("plain_text", "") for part in title_prop)
@@ -121,16 +126,17 @@ def get_blocks_text(page_id: str) -> str:
     return "\n".join(lines)
 
 
-def query_review_tasks(page_size: int = 50) -> List[Dict[str, Any]]:
+def query_review_tasks(page_size: int = 50, agent_tag: str = "openclaw") -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     start_cursor = None
+    normalized_tag = normalize_agent_tag(agent_tag)
 
     while True:
         payload: Dict[str, Any] = {
             "filter": {
                 "and": [
                     {"property": "Status", "status": {"equals": "Review"}},
-                    {"property": "Tags", "multi_select": {"contains": "🤖 nanobot"}},
+                    {"property": "Tags", "multi_select": {"contains": normalized_tag}},
                 ]
             },
             "sorts": [{"timestamp": "last_edited_time", "direction": "descending"}],
@@ -189,8 +195,9 @@ def find_matching_review(
     signature: Optional[str],
     page_size: int = 50,
     proposal_content: Optional[str] = None,
+    agent_tag: str = "openclaw",
 ) -> Tuple[Optional[Dict[str, Any]], str, float, bool]:
-    candidates = query_review_tasks(page_size=page_size)
+    candidates = query_review_tasks(page_size=page_size, agent_tag=agent_tag)
     normalized_title = normalize_text(title)
     proposal_content = proposal_content or ""
     scored: List[Tuple[float, Dict[str, Any]]] = []
@@ -242,6 +249,7 @@ def main() -> int:
     parser.add_argument("--proposal-key", default=None)
     parser.add_argument("--signature", default=None)
     parser.add_argument("--page-size", type=int, default=50)
+    parser.add_argument("--agent-tag", default="openclaw")
     args = parser.parse_args()
 
     proposal_content = ""
@@ -255,6 +263,7 @@ def main() -> int:
         signature=args.signature,
         page_size=args.page_size,
         proposal_content=proposal_content,
+        agent_tag=args.agent_tag,
     )
 
     output = {

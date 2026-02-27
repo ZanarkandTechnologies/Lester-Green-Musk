@@ -42,7 +42,7 @@ Proposal-only phase for heartbeat and operator-triggered planning. This skill cr
      - coding/software -> `tech-impl-plan`
      - general/operational -> `impl-plan`
 4. Draft concrete proposal from that plan stack.
-5. Query existing `Review` + `🤖 nanobot` proposals and run canonical-ticket triage.
+5. Query existing `Review` proposals filtered by the current agent tag and run canonical-ticket triage.
 6. Reuse existing canonical ticket when relevant (append update; retitle if scope is clearer).
 7. Create new proposal ticket only when no relevant canonical ticket exists.
 8. Add execution-ready checklist that reduces user effort to a yes/no approval.
@@ -52,7 +52,7 @@ Proposal-only phase for heartbeat and operator-triggered planning. This skill cr
    - Is this the smallest high-impact actionable slice?
    - Does final plan include required testing/review criteria?
    - Does final plan include final wow gate todos?
-10. Send Telegram reminder/notification using direct Telegram Bot API call.
+10. Send Telegram reminder/notification using OpenClaw `message` tool.
 11. Stop and wait for explicit approval (`yes` / `go ahead`) before any execution.
 
 ## Depth-Gate Rules (Software vs General Tasks)
@@ -90,7 +90,7 @@ Proposal-only phase for heartbeat and operator-triggered planning. This skill cr
 - [ ] Add execution checklist (already-prepared steps).
 - [ ] Run review pass (extra-mile quality gate).
 - [ ] Confirm plan includes required testing todos and final wow gate.
-- [ ] Send Telegram summary (direct API).
+- [ ] Send Telegram summary via OpenClaw `message` tool (`channel="telegram"`).
 - [ ] Return structured outcome for heartbeat contract.
 
 ## Core Decision Branches
@@ -111,7 +111,7 @@ Proposal-only phase for heartbeat and operator-triggered planning. This skill cr
 - A single Review proposal thread exists for the proposal intent.
 - Proposal includes actionable solution details and execution checklist.
 - **Diagnosis report saved** to `diagnosis/YYYY-MM-DD-HHMM.md` with full board exploration.
-- Telegram reminder is sent without creating duplicate board tasks.
+- Telegram reminder is sent via OpenClaw `message` tool without creating duplicate board tasks.
 - Proposal is phrased as "I prepared this, click yes to run," not just problem reporting.
 
 ## Mandatory Review Step (Extra-Mile Gate)
@@ -158,25 +158,10 @@ Before finalizing any proposal, verify:
 
 Why bad: problem-only, no canonical choice, no prepared plan, pushes work back to user.
 
-## Telegram Delivery (Bypass Message Tool)
+## Telegram Delivery
 
-For heartbeat/proposal notifications, do not use the `message` tool.
-Use direct Telegram API to avoid channel routing bugs.
-
-```bash
-TELEGRAM_BOT_TOKEN=$(python3 - <<'PY'
-import json, pathlib
-cfg = json.loads(pathlib.Path.home().joinpath(".nanobot/config.json").read_text())
-print(cfg["channels"]["telegram"]["token"])
-PY
-)
-
-TELEGRAM_CHAT_ID="6413825906"
-
-curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-  -d "chat_id=$TELEGRAM_CHAT_ID" \
-  --data-urlencode "text=HEARTBEAT SUMMARY: <summary here>"
-```
+Use OpenClaw `message` tool with `channel="telegram"` and `target="6413825906"`.
+Example provided in skill examples.
 
 ## Canonical Workflow Diagram
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Create a Notion task with rich text proposal.
-Usage: python create_proposal_task.py "Task Name" "proposal.md"
+Usage: python create_proposal_task.py "Task Name" "proposal.md" [--agent-tag "agent-name"]
 """
 
 import argparse
@@ -141,19 +141,26 @@ def _metadata_block(proposal_key, signature):
     ]
 
 
-def create_task(name, proposal_file, proposal_key=None, signature=None):
+def normalize_agent_tag(value: str) -> str:
+    tag = (value or "").strip().lower()
+    return tag or "openclaw"
+
+
+def create_task(name, proposal_file, proposal_key=None, signature=None, agent_tag="openclaw"):
     """Create Notion task with rich text proposal."""
     proposal_content = read_proposal(proposal_file)
     blocks = _metadata_block(proposal_key, signature) + build_rich_text(proposal_content)
 
     today = datetime.now().strftime("%Y-%m-%d")
 
+    normalized_tag = normalize_agent_tag(agent_tag)
+
     payload = {
         "parent": {"database_id": TASKS_DB},
         "properties": {
             "Name": {"title": [{"type": "text", "text": {"content": name}}]},
             "Status": {"status": {"name": "Review"}},
-            "Tags": {"multi_select": [{"name": "🤖 nanobot"}]},
+            "Tags": {"multi_select": [{"name": normalized_tag}]},
             "Act Time": {"date": {"start": today}},
         },
         "children": blocks,
@@ -186,6 +193,7 @@ if __name__ == "__main__":
     parser.add_argument("proposal_file")
     parser.add_argument("--proposal-key", default=None)
     parser.add_argument("--signature", default=None)
+    parser.add_argument("--agent-tag", default="openclaw")
     args = parser.parse_args()
 
     if not os.path.exists(args.proposal_file):
@@ -197,4 +205,5 @@ if __name__ == "__main__":
         args.proposal_file,
         proposal_key=args.proposal_key,
         signature=args.signature,
+        agent_tag=args.agent_tag,
     )

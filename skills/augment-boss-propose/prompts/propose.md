@@ -10,7 +10,7 @@ Copy and paste this into a new session to start a proposal pass.
 
 1. Proposal mode: identify one niche, high-leverage problem and produce a concrete solution proposal.
 2. Build planning stack for selected target: `Potential Problem -> Mini-PRD -> (Spec/SOP if needed) -> Impl Plan`.
-3. Query existing `Review` + `🤖 nanobot` proposals first and triage the most relevant canonical ticket.
+3. Query existing `Review` proposals first, filtered by the current agent tag, and triage the most relevant canonical ticket.
 4. Reuse canonical ticket when relevant (append update/reminder), and retitle it if scope is clearer now.
 5. Create new ticket only when no relevant Review ticket exists.
 6. Use solution-first title format: `🤖 Proposal: <niche problem> -> <solution angle>`.

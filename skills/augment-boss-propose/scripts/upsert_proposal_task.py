@@ -59,6 +59,7 @@ def main() -> int:
     parser.add_argument("--proposal-file", required=True)
     parser.add_argument("--proposal-key", default=None)
     parser.add_argument("--signature", default=None)
+    parser.add_argument("--agent-tag", default="openclaw")
     parser.add_argument("--page-size", type=int, default=50)
     parser.add_argument(
         "--dry-run-state",
@@ -144,6 +145,7 @@ def main() -> int:
         signature=args.signature,
         page_size=args.page_size,
         proposal_content=proposal_content,
+        agent_tag=args.agent_tag,
     )
 
     if match:
@@ -171,6 +173,7 @@ def main() -> int:
         args.proposal_file,
         proposal_key=args.proposal_key,
         signature=args.signature,
+        agent_tag=args.agent_tag,
     )
     if not create_data:
         raise RuntimeError("Failed to create proposal task.")
