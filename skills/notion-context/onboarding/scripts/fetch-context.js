@@ -14,10 +14,22 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
+const DEFAULT_STATE = path.join(__dirname, '..', 'state.json');
 const NOTION_KEY = process.env.NOTION_API_KEY || process.env.OPENCLAW_NOTION_API_KEY;
 const NOTION_VERSION = process.env.NOTION_VERSION || '2022-06-28';
 const DEFAULT_MAPPING = path.join(process.cwd(), 'config', 'notion-mapping.json');
 const DEFAULT_OUT = path.join(process.cwd(), 'context', 'notion-context.json');
+
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log(`Usage:
+  node fetch-context.js --view=tasks-this-week
+  node fetch-context.js --view="fetched tasks from this week"
+  node fetch-context.js --view=life-context
+  node fetch-context.js --state=${DEFAULT_STATE}
+  node fetch-context.js --mapping=${DEFAULT_MAPPING}
+`);
+  process.exit(0);
+}
 
 if (!NOTION_KEY) {
   console.error('Error: NOTION_API_KEY not set');
@@ -61,61 +73,207 @@ function notionRequest(endpoint, method = 'GET', body = null) {
   });
 }
 
-function buildFilter(dbConfig, type) {
-  const { status_property, status_type, done_values, date_property } = dbConfig;
-  const filters = [];
+function normalizeViewName(input) {
+  const normalized = String(input || 'life-context')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 
-  if (!status_property || done_values.length === 0) {
-    return null; // No status filtering possible
-  }
+  const aliases = {
+    'tasks-this-week': 'tasks-this-week',
+    'task-this-week': 'tasks-this-week',
+    'fetched-tasks-from-this-week': 'tasks-this-week',
+    'fetch-tasks-from-this-week': 'tasks-this-week',
+    'projects-active': 'projects-active',
+    'active-projects': 'projects-active',
+    'projects-completed': 'projects-completed',
+    'completed-projects': 'projects-completed',
+    'goals-active': 'goals-active',
+    'active-goals': 'goals-active',
+    'goals-completed': 'goals-completed',
+    'completed-goals': 'goals-completed',
+    'life-context': 'life-context'
+  };
 
-  // Build NOT Done filter
-  if (status_type === 'status') {
-    // New status type - use status filter
-    filters.push({
-      property: status_property,
-      status: {
-        does_not_equal: done_values[0] // API limitation: one at a time or use compound
-      }
-    });
-  } else {
-    // Legacy select type
-    filters.push({
-      property: status_property,
-      select: {
-        does_not_equal: done_values[0]
-      }
-    });
-  }
-
-  // For tasks, add recency filter
-  if (type === 'tasks') {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-    if (date_property) {
-      // Has date property - filter to this week or recent
-      filters.push({
-        property: date_property,
-        date: {
-          on_or_after: sevenDaysAgo.toISOString().split('T')[0]
-        }
-      });
-    }
-    // Also apply recency via last_edited_time sort
-  }
-
-  return filters.length === 1 ? filters[0] : { and: filters };
+  return aliases[normalized] || normalized;
 }
 
-async function fetchDatabase(dbConfig, type) {
-  const filter = buildFilter(dbConfig, type);
+function startOfWeek(date) {
+  const next = new Date(date);
+  const day = next.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  next.setHours(0, 0, 0, 0);
+  next.setDate(next.getDate() + diff);
+  return next;
+}
+
+function endOfWeek(date) {
+  const next = startOfWeek(date);
+  next.setDate(next.getDate() + 6);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function isoDate(date) {
+  return date.toISOString().split('T')[0];
+}
+
+function buildStatusCondition(dbConfig, operator, value) {
+  if (dbConfig.status_type === 'status') {
+    return {
+      property: dbConfig.status_property,
+      status: {
+        [operator]: value
+      }
+    };
+  }
+
+  return {
+    property: dbConfig.status_property,
+    select: {
+      [operator]: value
+    }
+  };
+}
+
+function buildDoneFilter(dbConfig, includeDone) {
+  const doneValues = dbConfig.done_values || [];
+  if (!dbConfig.status_property || doneValues.length === 0) {
+    return null;
+  }
+
+  const conditions = doneValues.map((value) =>
+    buildStatusCondition(dbConfig, includeDone ? 'equals' : 'does_not_equal', value)
+  );
+
+  if (conditions.length === 1) {
+    return conditions[0];
+  }
+
+  return includeDone ? { or: conditions } : { and: conditions };
+}
+
+function buildWeekFilter(dbConfig, now) {
+  const weekStart = startOfWeek(now);
+  const weekEnd = endOfWeek(now);
+
+  if (dbConfig.date_property) {
+    return {
+      and: [
+        {
+          property: dbConfig.date_property,
+          date: {
+            on_or_after: isoDate(weekStart)
+          }
+        },
+        {
+          property: dbConfig.date_property,
+          date: {
+            on_or_before: isoDate(weekEnd)
+          }
+        }
+      ]
+    };
+  }
+
+  return {
+    and: [
+      {
+        timestamp: 'last_edited_time',
+        last_edited_time: {
+          on_or_after: weekStart.toISOString()
+        }
+      },
+      {
+        timestamp: 'last_edited_time',
+        last_edited_time: {
+          on_or_before: weekEnd.toISOString()
+        }
+      }
+    ]
+  };
+}
+
+function buildFilter(dbConfig, viewName, now) {
+  if (!dbConfig.status_property && !dbConfig.date_property) {
+    return null;
+  }
+
+  if (viewName === 'tasks-this-week') {
+    return buildWeekFilter(dbConfig, now);
+  }
+
+  if (viewName.endsWith('-active')) {
+    return buildDoneFilter(dbConfig, false);
+  }
+
+  if (viewName.endsWith('-completed')) {
+    return buildDoneFilter(dbConfig, true);
+  }
+
+  return null;
+}
+
+function buildSorts(dbConfig, viewName) {
+  if (viewName === 'tasks-this-week' && dbConfig.date_property) {
+    return [
+      { property: dbConfig.date_property, direction: 'ascending' },
+      { timestamp: 'last_edited_time', direction: 'descending' }
+    ];
+  }
+
+  return [
+    { timestamp: 'last_edited_time', direction: 'descending' }
+  ];
+}
+
+function getPropertyValue(page, propertyName) {
+  return propertyName ? page.properties?.[propertyName] || null : null;
+}
+
+function getTitle(page, dbConfig) {
+  const titleProperty = getPropertyValue(page, dbConfig.title_property);
+  if (titleProperty?.type === 'title') {
+    return titleProperty.title.map((token) => token.plain_text).join('') || 'Untitled';
+  }
+
+  return page.properties?.Name?.title?.map((t) => t.plain_text).join('') ||
+    page.properties?.Title?.title?.map((t) => t.plain_text).join('') ||
+    'Untitled';
+}
+
+function getStatus(page, dbConfig) {
+  const property = getPropertyValue(page, dbConfig.status_property);
+  if (!property) {
+    return null;
+  }
+
+  if (property.type === 'status') {
+    return property.status?.name || null;
+  }
+
+  if (property.type === 'select') {
+    return property.select?.name || null;
+  }
+
+  return null;
+}
+
+function getDate(page, dbConfig) {
+  const property = getPropertyValue(page, dbConfig.date_property);
+  if (!property || property.type !== 'date') {
+    return null;
+  }
+  return property.date?.start || null;
+}
+
+async function fetchDatabase(dbConfig, type, viewName, now) {
+  const filter = buildFilter(dbConfig, viewName, now);
 
   const queryBody = {
     page_size: 100,
-    sorts: [
-      { timestamp: 'last_edited_time', direction: 'descending' }
-    ]
+    sorts: buildSorts(dbConfig, viewName)
   };
 
   if (filter) {
@@ -126,51 +284,196 @@ async function fetchDatabase(dbConfig, type) {
 
   return {
     type,
+    named_view: viewName,
     database_id: dbConfig.id,
     database_title: dbConfig.title,
     total: result.results?.length || 0,
     has_more: result.has_more || false,
     items: result.results?.map((page) => ({
       id: page.id,
-      title: page.properties?.Name?.title?.map((t) => t.plain_text).join('') ||
-             page.properties?.Title?.title?.map((t) => t.plain_text).join('') ||
-             'Untitled',
-      status: page.properties?.[dbConfig.status_property]?.[dbConfig.status_type]?.name || null,
+      title: getTitle(page, dbConfig),
+      status: getStatus(page, dbConfig),
+      date: getDate(page, dbConfig),
       url: page.url,
       last_edited: page.last_edited_time
     })) || []
   };
 }
 
-async function main() {
-  const mappingPath = process.argv.find((a) => a.startsWith('--mapping='))?.split('=')[1] || DEFAULT_MAPPING;
-  const outPath = process.argv.find((a) => a.startsWith('--out='))?.split('=')[1] || DEFAULT_OUT;
+function summarizeStatusGroups(items) {
+  const groups = {};
+  for (const item of items) {
+    const key = (item.status || 'unknown').toLowerCase();
+    groups[key] = (groups[key] || 0) + 1;
+  }
+  return groups;
+}
 
-  if (!fs.existsSync(mappingPath)) {
-    console.error(`Mapping file not found: ${mappingPath}`);
-    console.error('Run discover.js first to create the mapping.');
-    process.exit(1);
+function buildSummary(viewName, sourceData, now) {
+  if (viewName === 'tasks-this-week') {
+    const weekStart = isoDate(startOfWeek(now));
+    const weekEnd = isoDate(endOfWeek(now));
+    return {
+      named_view: viewName,
+      title: 'Fetched tasks from this week',
+      data_window: {
+        start: weekStart,
+        end: weekEnd
+      },
+      total: sourceData.total,
+      status_groups: summarizeStatusGroups(sourceData.items)
+    };
   }
 
-  const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+  return {
+    named_view: viewName,
+    total: sourceData.total
+  };
+}
+
+function buildProjectsSummary(sourceData) {
+  if (!sourceData || sourceData.error) {
+    return null;
+  }
+
+  return {
+    total: sourceData.total,
+    items: sourceData.items.map((item) => ({
+      title: item.title,
+      status: item.status,
+      url: item.url
+    }))
+  };
+}
+
+function buildActiveTasksSummary(sourceData) {
+  if (!sourceData || sourceData.error) {
+    return null;
+  }
+
+  return {
+    total: sourceData.total,
+    status_groups: summarizeStatusGroups(sourceData.items),
+    items: sourceData.items.map((item) => ({
+      title: item.title,
+      status: item.status,
+      date: item.date,
+      url: item.url
+    }))
+  };
+}
+
+function buildFailureReason(context) {
+  const failures = Object.entries(context.sources)
+    .filter(([, data]) => data?.error)
+    .map(([type, data]) => `${type}: ${data.error}`);
+
+  return failures.length > 0 ? failures.join('; ') : null;
+}
+
+function loadState(statePath, mappingPath) {
+  if (fs.existsSync(statePath)) {
+    return JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  }
+
+  if (fs.existsSync(mappingPath)) {
+    const mapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+    return {
+      completed: Boolean(
+        mapping.sources?.tasks || mapping.sources?.projects || mapping.sources?.goals
+      ),
+      lastRunAt: mapping.timestamp || null,
+      sources: mapping.sources || {},
+      all_databases: mapping.all_databases || []
+    };
+  }
+
+  return null;
+}
+
+async function main() {
+  const statePath = process.argv.find((a) => a.startsWith('--state='))?.split('=')[1] || DEFAULT_STATE;
+  const mappingPath = process.argv.find((a) => a.startsWith('--mapping='))?.split('=')[1] || DEFAULT_MAPPING;
+  const outPath = process.argv.find((a) => a.startsWith('--out='))?.split('=')[1] || DEFAULT_OUT;
+  const requestedView = process.argv.find((a) => a.startsWith('--view='))?.split('=')[1] || 'life-context';
+  const viewName = normalizeViewName(requestedView);
+  const now = new Date();
+
+  const state = loadState(statePath, mappingPath);
+  if (!state) {
+    console.error(`State file not found: ${statePath}`);
+    console.error(`Mapping file not found: ${mappingPath}`);
+    console.error('Run discover.js first to create the mapping and onboarding state.');
+    process.exit(1);
+  }
 
   console.log('Fetching Notion context...\n');
 
   const context = {
-    timestamp: new Date().toISOString(),
+    timestamp: now.toISOString(),
+    named_view: viewName,
+    provider_status: state.completed ? 'ok' : 'degraded',
+    data_window: null,
+    projects_summary: null,
+    active_tasks_summary: null,
+    stale_risks: [],
+    completion_trend: null,
+    failure_reason: null,
     sources: {}
   };
 
-  for (const [type, dbConfig] of Object.entries(mapping.sources)) {
+  const viewSourceTypes = {
+    'tasks-this-week': ['tasks'],
+    'projects-active': ['projects'],
+    'projects-completed': ['projects'],
+    'goals-active': ['goals'],
+    'goals-completed': ['goals'],
+    'life-context': ['tasks', 'projects', 'goals']
+  };
+
+  const selectedTypes = viewSourceTypes[viewName];
+  if (!selectedTypes) {
+    console.error(`Unknown view: ${requestedView}`);
+    process.exit(1);
+  }
+
+  for (const type of selectedTypes) {
+    const dbConfig = state.sources?.[type];
+    if (!dbConfig) {
+      context.sources[type] = {
+        type,
+        error: `Missing mapped source for ${type}`
+      };
+      continue;
+    }
+
     try {
-      console.log(`Fetching ${type} from "${dbConfig.title}"...`);
-      const data = await fetchDatabase(dbConfig, type);
+      const sourceView =
+        viewName === 'life-context'
+          ? (type === 'tasks' ? 'tasks-this-week' : `${type}-active`)
+          : viewName;
+      console.log(`Fetching ${type} from "${dbConfig.title}" using view "${sourceView}"...`);
+      const data = await fetchDatabase(dbConfig, type, sourceView, now);
+      data.summary = buildSummary(sourceView, data, now);
       context.sources[type] = data;
       console.log(`   ${data.total} items\n`);
     } catch (err) {
       console.error(`   Failed: ${err.message}\n`);
       context.sources[type] = { error: err.message, type, database_id: dbConfig.id };
     }
+  }
+
+  const tasksSource = context.sources.tasks;
+  const projectsSource = context.sources.projects;
+
+  if (tasksSource?.summary?.data_window) {
+    context.data_window = tasksSource.summary.data_window;
+  }
+  context.projects_summary = buildProjectsSummary(projectsSource);
+  context.active_tasks_summary = buildActiveTasksSummary(tasksSource);
+  context.failure_reason = buildFailureReason(context);
+  if (context.failure_reason) {
+    context.provider_status = 'degraded';
   }
 
   // Ensure output directory exists
@@ -189,6 +492,9 @@ async function main() {
       console.log(`   ${type}: ERROR - ${data.error}`);
     } else {
       console.log(`   ${type}: ${data.total} items`);
+      if (data.summary?.title) {
+        console.log(`      ${data.summary.title}`);
+      }
     }
   }
 }

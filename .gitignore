@@ -3,11 +3,16 @@
 !.gitignore
 
 # Re-include only the docs
+!docs/
 !docs/**
 
 # Re-include only the AGENTS and HEARTBEAT
 !AGENTS.md
 !HEARTBEAT.md
+
+# Re-include repo scripts
+!scripts/
+!scripts/**
 
 # Re-include only the skill folders you want to share
 !skills/
